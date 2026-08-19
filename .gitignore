@@ -4,3 +4,6 @@ out/
 .afl_tmp/
 .showmap/
 *.log
+targets/bin/
+targets/seeds/
+targets/triggers/
