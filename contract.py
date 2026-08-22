@@ -77,7 +77,8 @@ class CampaignStats:
     total_execs: int
     execs_per_sec: float
     edges_covered: int       # 已命中边数
-    edges_total: int         # 目标静态总边数（口径：objdump 反汇编总条件跳转边数）
+    edges_total: int         # 目标静态总边数（口径：afl sancov 插桩 guard 数，
+                             # 优先取无 sanitizer 基准版 *_ref；无插桩时回退 objdump 条件跳转数）
     crashes: int             # 崩溃总数（含重复）
     unique_crashes: int      # 去重后崩溃数（验收指标）
     timeouts: int

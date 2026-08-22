@@ -6,9 +6,9 @@ import sys
 class SeedGenerator:
     def __init__(self, binary_path, analysis_report_path="analysis.json"):
         self.binary_path = binary_path
+        self.report_path = analysis_report_path
         if not os.path.exists(analysis_report_path):
-            print(f"[P2 D3 错误] 找不到 {analysis_report_path}")
-            sys.exit(1)
+            raise FileNotFoundError(f"找不到分析报告: {analysis_report_path}")
         with open(analysis_report_path, 'r') as f:
             self.report = json.load(f)
         print(f"[P2 D3] 种子生成器加载分析报告成功，共 {len(self.report.get('seeds', []))} 个旧种子路径占位")
@@ -42,6 +42,23 @@ class SeedGenerator:
             seeds.append((f"format_{i}", payload))
         return seeds
 
+    def _smart_int_seeds(self):
+        """整数解析类目标的经典边界值种子（atoi/strtol 触发整数溢出）"""
+        seeds = []
+        int_payloads = [
+            b"0", b"-1", b"1",
+            b"536870912",       # 2^29，×4 溢出 INT_MAX
+            b"1073741824",      # 2^30
+            b"2147483647",      # INT_MAX
+            b"2147483648",      # INT_MAX + 1
+            b"-2147483648",     # INT_MIN
+            b"4294967295",      # UINT_MAX
+            b"9999999999",      # 超 32 位十进制
+        ]
+        for i, payload in enumerate(int_payloads):
+            seeds.append((f"int_boundary_{i}", payload))
+        return seeds
+
     def _smart_path_seeds(self):
         """路径遍历和命令注入种子"""
         seeds = []
@@ -68,7 +85,9 @@ class SeedGenerator:
         all_smart_seeds.extend(self._smart_strcpy_seeds())
         # 2. 智能种子：格式字符串
         all_smart_seeds.extend(self._smart_format_seeds())
-        # 3. 智能种子：路径/命令注入
+        # 3. 智能种子：整数边界值
+        all_smart_seeds.extend(self._smart_int_seeds())
+        # 4. 智能种子：路径/命令注入
         all_smart_seeds.extend(self._smart_path_seeds())
 
         # 写入文件
@@ -81,11 +100,11 @@ class SeedGenerator:
             seeds_list.append(seed_path)
             print(f"[P2 D3] 生成智能种子: {seed_path} (大小 {len(data)} 字节)")
 
-        # 更新 report 中的种子路径
+        # 更新 report 中的种子路径并回写分析报告
         self.report["seeds"] = seeds_list
-        with open("analysis.json", "w") as f:
+        with open(self.report_path, "w") as f:
             json.dump(self.report, f, indent=2, default=str)
-        print(f"[P2 D3] 共生成 {len(seeds_list)} 个智能种子，已写入 analysis.json")
+        print(f"[P2 D3] 共生成 {len(seeds_list)} 个智能种子，已写入 {self.report_path}")
         return seeds_list
 
     def generate_dictionary(self, output_path="dict.txt"):
@@ -109,7 +128,7 @@ class SeedGenerator:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 skill1/seed_gen.py <target_binary>")
+        print("Usage: python3 -m skill.seed_gen <target_binary>")
         sys.exit(1)
     gen = SeedGenerator(sys.argv[1], "analysis.json")
     gen.generate_seeds("./corpus")

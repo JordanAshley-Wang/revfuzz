@@ -14,7 +14,9 @@
 
 ```bash
 # 1) 编译（优先 afl-clang-fast 插桩，无则回退 clang/gcc）
-./build.sh                      # 二进制输出到 ./bin/
+./build.sh                      # 二进制输出到 ./bin/；
+                                # 另生成无 sanitizer 的 ./bin/*_ref 覆盖基准版
+                                # （仅供静态分析统计 edges_total，不用于 fuzz）
 
 # 2) 生成初始种子与已知崩溃输入
 ./gen_corpus.sh                 # 生成 seeds/ 与 triggers/

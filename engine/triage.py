@@ -25,6 +25,20 @@ from typing import List, Optional
 
 from contract import CrashInfo, VulnType
 
+
+def _run_env() -> dict:
+    """执行目标的环境：关闭 ASan 外部符号化。
+
+    ASan 崩溃时默认 fork llvm-symbolizer 做符号化；本机 llvm-symbolizer-13
+    与 clang-14 的 ASan 运行时不兼容会死循环拖垮整机。符号化由本模块
+    _symbolize()（addr2line）兜底，无需 ASan 外部符号器。
+    """
+    env = dict(os.environ)
+    asan = env.get("ASAN_OPTIONS", "")
+    if "symbolize" not in asan:
+        env["ASAN_OPTIONS"] = (asan + ":" if asan else "") + "symbolize=0"
+    return env
+
 # ============================================================
 # 分类规则（正则 + 映射表）
 # ============================================================
@@ -88,6 +102,34 @@ _ASAN_SUMMARY_RE = re.compile(
     r"SUMMARY:\s*AddressSanitizer:\s*\S+\s+(.+?:\d+)(?::\d+)?\s+in\s+(\S+)"
 )
 
+# 未符号化的 ASan SUMMARY 行： "SUMMARY: AddressSanitizer: xxx (/p/bin+0x487b97)"
+_ASAN_OFFSET_SUMMARY_RE = re.compile(
+    r"SUMMARY:\s*AddressSanitizer:\s*\S+\s+\((\S+?)\+0x([0-9a-fA-F]+)\)"
+)
+
+# 未符号化的栈帧： "#1 0x4ce494  (/p/bin+0x4ce494)"（SUMMARY 指向拦截器时用帧兜底）
+_ASAN_OFFSET_FRAME_RE = re.compile(
+    r"#\d+\s+0x[0-9a-fA-F]+\s+\((\S+?)\+0x([0-9a-fA-F]+)\)"
+)
+
+
+def _symbolize(binary: str, addr_hex: str) -> tuple[str, str]:
+    """用 addr2line 把 (binary+0xADDR) 还原成 (函数, 文件:行)；失败返回 ("","")。
+
+    ASan 找不到 llvm-symbolizer 时栈帧只给裸偏移，靠这个兜底补符号。
+    """
+    try:
+        proc = subprocess.run(
+            ["addr2line", "-e", binary, "-f", "-C", "0x" + addr_hex],
+            capture_output=True, text=True, timeout=5,
+        )
+        lines = proc.stdout.splitlines()
+        if len(lines) >= 2 and "??" not in lines[1]:
+            return lines[0].strip(), lines[1].strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return "", ""
+
 # UBSan 错误行自带位置： "vuln_int.c:12:5: runtime error: ..."
 _UBSAN_LOC_RE = re.compile(r"^(.+?:\d+:\d+):\s*runtime error:", re.MULTILINE)
 
@@ -117,6 +159,14 @@ def _extract_location(stderr: bytes, vuln_type: str) -> str:
     m = _ASAN_SUMMARY_RE.search(text)
     if m:
         return f"{m.group(2)} {_norm_path(m.group(1))}".strip()
+
+    # ASan 未符号化（裸偏移）：SUMMARY 常指向 __interceptor_*（无行号），
+    # 需遍历栈帧取第一个能符号化出 文件:行 的用户帧
+    if _ASAN_OFFSET_SUMMARY_RE.search(text):
+        for fm in _ASAN_OFFSET_FRAME_RE.finditer(text):
+            func, fileline = _symbolize(fm.group(1), fm.group(2))
+            if fileline:
+                return f"{func} {_norm_path(fileline)}".strip()
 
     # 否则取第一个带函数名 + 文件:行的栈帧（通常是 #0）
     for line in text.splitlines():
@@ -220,7 +270,7 @@ def _run_target(
         if feed_mode == "stdin":
             proc = subprocess.run(
                 [target], input=data, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, timeout=timeout,
+                stderr=subprocess.PIPE, timeout=timeout, env=_run_env(),
             )
         else:
             fd, tmp = tempfile.mkstemp()
@@ -231,7 +281,7 @@ def _run_target(
             try:
                 proc = subprocess.run(
                     [target, tmp], stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE, timeout=timeout,
+                    stderr=subprocess.PIPE, timeout=timeout, env=_run_env(),
                 )
             finally:
                 os.unlink(tmp)
@@ -254,7 +304,7 @@ def _stderr_of(target: str, data: bytes, timeout: float, feed_mode: str) -> byte
         if feed_mode == "stdin":
             proc = subprocess.run(
                 [target], input=data, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, timeout=timeout,
+                stderr=subprocess.PIPE, timeout=timeout, env=_run_env(),
             )
         else:
             fd, tmp = tempfile.mkstemp()
@@ -265,7 +315,7 @@ def _stderr_of(target: str, data: bytes, timeout: float, feed_mode: str) -> byte
             try:
                 proc = subprocess.run(
                     [target, tmp], stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE, timeout=timeout,
+                    stderr=subprocess.PIPE, timeout=timeout, env=_run_env(),
                 )
             finally:
                 os.unlink(tmp)

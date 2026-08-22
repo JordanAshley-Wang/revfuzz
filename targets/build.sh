@@ -48,4 +48,16 @@ for t in "${TARGETS[@]}"; do
     "$CC" "${CFLAGS[@]}" -o "$OUT_DIR/$t" "$SRC_DIR/$t.c"
 done
 
+# ---- 覆盖基准版本 *_ref（纯 afl 插桩，无 sanitizer）----
+# sanitizer 会向用户函数注入大量检测分支（如 vuln_stack：目标自身 9 条插桩边，
+# ASan 版膨胀到 24 条），使静态边数分母失真、覆盖率恒偏低。
+# *_ref 仅供 P2 静态分析统计 edges_total（目标自身逻辑的插桩边数），不用于 fuzz。
+if [ "$INSTRUMENTED" = "1" ]; then
+    for t in "${TARGETS[@]}"; do
+        "$CC" -O1 -g -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 \
+            -o "$OUT_DIR/${t}_ref" "$SRC_DIR/$t.c"
+    done
+    echo "==> 覆盖基准版本 *_ref 编译完成（仅用于 edges_total 统计）"
+fi
+
 echo "==> 完成。二进制位于 $OUT_DIR/"

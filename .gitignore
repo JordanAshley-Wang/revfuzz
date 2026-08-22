@@ -7,3 +7,5 @@ out/
 targets/bin/
 targets/seeds/
 targets/triggers/
+out_*/
+out_*.console

@@ -92,8 +92,9 @@ def _obtain_analysis(args: argparse.Namespace) -> dict | None:
         from skill.static_analysis import analyze
         LOG.info("静态分析: %s", args.target)
         return analyze(args.target, args.workdir)
-    except NotImplementedError:
-        LOG.warning("静态分析未就绪（P2），以无分析模式运行")
+    except Exception as e:
+        LOG.warning("静态分析失败（%s: %s），以无分析模式运行",
+                    type(e).__name__, e)
         return None
 
 
@@ -141,8 +142,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ③ P3 覆盖反馈 + P1 主循环
     from engine.coverage import CoverageRunner
-    runner = CoverageRunner(args.target, run_timeout_ms=args.run_timeout_ms,
-                            workdir=os.path.join(args.workdir, ".showmap"))
+    runner = CoverageRunner(args.target, timeout_ms=args.run_timeout_ms)
     fuzzer = Fuzzer(
         target=args.target,
         corpus=corpus,

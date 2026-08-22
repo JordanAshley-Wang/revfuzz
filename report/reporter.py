@@ -270,7 +270,7 @@ def _render_markdown(data: dict) -> str:
         for fn in functions:
             calls = ", ".join(_escape_inline(c) for c in _get(fn, "calls", []) or []) or "-"
             lines.append(
-                f"| `{_escape_inline(_get(fn, 'name', ''))}` | 0x{int(_get(fn, 'addr', 0)):x} | "
+                f"| `{_escape_inline(_get(fn, 'name', ''))}` | 0x{_addr_int(_get(fn, 'addr', 0)):x} | "
                 f"{_get(fn, 'size', 0)} | **{_get(fn, 'risk_score', 0)}** | {calls} |"
             )
         lines.append("")
@@ -288,7 +288,7 @@ def _render_markdown(data: dict) -> str:
             lines.append(
                 f"| `{_escape_inline(_get(call, 'function', ''))}` | "
                 f"`{_escape_inline(_get(call, 'api', ''))}` | "
-                f"0x{int(_get(call, 'addr', 0)):x} | {tag} |"
+                f"0x{_addr_int(_get(call, 'addr', 0)):x} | {tag} |"
             )
         lines.append("")
 
@@ -343,3 +343,11 @@ def _get(obj: Any, key: str, default: Any) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default) if hasattr(obj, key) else default
+
+
+def _addr_int(x: Any) -> int:
+    """地址字段安全转 int：兼容 int 与 '0x...'/'123' 字符串，失败兜底 0。"""
+    try:
+        return int(str(x), 0)
+    except (TypeError, ValueError):
+        return 0

@@ -50,8 +50,7 @@ class Fuzzer:
         self.timeout_s = timeout_s
         self.max_len = max_len
         self.max_execs = max_execs
-        self.coverage = coverage_runner or CoverageRunner(
-            target, workdir=os.path.join(workdir, ".showmap"))
+        self.coverage = coverage_runner or CoverageRunner(target)
         self._rng = random.Random(seed_rng)
 
         self.queue_dir = os.path.join(workdir, "queue")
@@ -148,7 +147,8 @@ class Fuzzer:
         with open(path, "wb") as f:
             f.write(data)
         self.queue.append(Seed(id=sid, path=path, data=data,
-                               found_edges=len(result.edges)))
+                               found_edges=len(getattr(result, "new_edges", None)
+                                               or result.edges)))
         LOG.debug("new seed: %s (%d edges)", path, len(result.edges))
 
     # ---------------- 崩溃处理 ----------------
@@ -169,6 +169,15 @@ class Fuzzer:
             LOG.debug("dup crash: %s", info.dedup_key)
             return
         self._dedup.add(info.dedup_key)
+        info.repro_cmd = info.repro_cmd.replace("<target>", self.target)
+        # 崩溃最小化（限次限时，失败不影响主流程）
+        try:
+            from engine.triage import minimize_crash
+            info.minimized_input = minimize_crash(
+                self.target, path, vuln_type=info.vuln_type,
+                timeout=1.0, max_iters=100)
+        except Exception as e:
+            LOG.debug("crash 最小化失败: %s", e)
         self.crashes.append(info)
         LOG.info("unique crash #%d [%s] %s",
                  len(self.crashes), info.vuln_type, path)
@@ -203,6 +212,17 @@ class Fuzzer:
 
     def _make_stats(self, start: float) -> CampaignStats:
         elapsed = max(time.time() - start, 1e-6)
+        # edges_total 优先用静态分析口径（目标自身逻辑的插桩边数），
+        # 无分析结果时依次回退：showmap map size → 已见边数（恒 100%，仅兜底）
+        edges_total = int(self.analysis.get("edges_total") or 0)
+        if edges_total <= 0:
+            edges_total = int(getattr(self.coverage, "static_map_size", 0) or 0)
+        if edges_total <= 0:
+            edges_total = int(getattr(self.coverage, "total_edges", 0) or 0)
+        # 静态分母是 *_ref 基准版的估计值；实际命中超过它说明估计偏小，
+        # 以观察值为准（避免报告出现 >100% 的覆盖率）
+        if len(self.unique_edges) > edges_total:
+            edges_total = len(self.unique_edges)
         return CampaignStats(
             target=self.target,
             start_time=start,
@@ -210,7 +230,7 @@ class Fuzzer:
             total_execs=self.total_execs,
             execs_per_sec=self.total_execs / elapsed,
             edges_covered=len(self.unique_edges),
-            edges_total=int(getattr(self.coverage, "total_edges", 0) or 0),
+            edges_total=edges_total,
             crashes=self.total_crashes,
             unique_crashes=len(self.crashes),
             timeouts=self.total_timeouts,
